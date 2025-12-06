@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microcraft</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/110/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.110/examples/js/controls/PointerLockControls.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script>
+        let scene, camera, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let moveUp = false, moveDown = false;
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+        let speed = 0.1;
+        let gravity = -0.02;
+        let isOnGround = false;
+        let isFlying = false;
+        let blocks = new Map(); 
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new THREE.PointerLockControls(camera, document.body);
+            document.body.addEventListener('click', () => controls.lock());
+
+            let light = new THREE.DirectionalLight(0xffffff, 1);
+            light.position.set(10, 10, 10);
+            scene.add(light);
+
+            generateTerrain(0, 0);
+
+            camera.position.set(0, 5, 0);
+
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', onMouseDown);
+
+            animate();
+        }
+
+        function generateTerrain(centerX, centerZ) {
+            let size = 20;
+            for (let x = centerX - size; x < centerX + size; x++) {
+                for (let z = centerZ - size; z < centerZ + size; z++) {
+                    if (!blocks.has(`${x}_0_${z}`)) {
+                        addBlock(x, 0, z, 0x00ff00);
+                    }
+                }
+            }
+        }
+
+        function addBlock(x, y, z, color) {
+            let geometry = new THREE.BoxGeometry();
+            let material = new THREE.MeshStandardMaterial({ color: color });
+            let block = new THREE.Mesh(geometry, material);
+            block.position.set(x, y, z);
+            scene.add(block);
+            blocks.set(`${x}_${y}_${z}`, block);
+        }
+
+        function removeBlock(x, y, z) {
+            let key = `${x}_${y}_${z}`;
+            if (blocks.has(key)) {
+                scene.remove(blocks.get(key));
+                blocks.delete(key);
+            }
+        }
+
+        function onMouseDown(event) {
+            let raycaster = new THREE.Raycaster();
+            let mouse = new THREE.Vector2();
+            raycaster.setFromCamera(mouse, camera);
+            let intersects = raycaster.intersectObjects(Array.from(blocks.values()));
+
+            if (intersects.length > 0) {
+                let block = intersects[0].object;
+                let pos = block.position;
+                if (event.button === 0) {
+                    removeBlock(pos.x, pos.y, pos.z);
+                } else if (event.button === 2) {
+                    let normal = intersects[0].face.normal;
+                    addBlock(pos.x + normal.x, pos.y + normal.y, pos.z + normal.z, 0x8B4513);
+                }
+            }
+        }
+
+        function onKeyDown(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'Space': 
+                    if (isFlying) moveUp = true;
+                    else if (isOnGround) velocity.y = 0.1; 
+                    break;
+                case 'ShiftLeft': if (isFlying) moveDown = true; break;
+                case 'KeyF': isFlying = !isFlying; break; // Toggle flying mode
+            }
+        }
+
+        function onKeyUp(event) {
+            switch (event.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+                case 'Space': moveUp = false; break;
+                case 'ShiftLeft': moveDown = false; break;
+            }
+        }
+
+        function checkGroundCollision() {
+            if (isFlying) return; 
+            
+            let playerY = camera.position.y;
+            isOnGround = false;
+            
+            blocks.forEach(block => {
+                let minX = block.position.x - 0.5, maxX = block.position.x + 0.5;
+                let minZ = block.position.z - 0.5, maxZ = block.position.z + 0.5;
+                let blockTop = block.position.y + 0.5;
+
+                if (camera.position.x > minX && camera.position.x < maxX &&
+                    camera.position.z > minZ && camera.position.z < maxZ &&
+                    playerY <= blockTop + 0.1) {
+                    
+                    isOnGround = true;
+                    camera.position.y = blockTop + 1.5;
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls.isLocked) {
+                direction.set(0, 0, 0);
+
+                if (moveForward) direction.z -= 1;
+                if (moveBackward) direction.z += 1;
+                if (moveLeft) direction.x -= 1;
+                if (moveRight) direction.x += 1;
+                if (moveUp) direction.y += 1;
+                if (moveDown) direction.y -= 1;
+
+                direction.normalize();
+
+                let forward = new THREE.Vector3();
+                camera.getWorldDirection(forward);
+                forward.y = 0;
+                forward.normalize();
+
+                let right = new THREE.Vector3();
+                right.crossVectors(forward, camera.up);
+                right.normalize();
+
+                velocity.x = right.x * direction.x * speed + forward.x * direction.z * speed;
+                velocity.z = right.z * direction.x * speed + forward.z * direction.z * speed;
+                if (isFlying) velocity.y = direction.y * speed; 
+                else if (!isOnGround) velocity.y += gravity;
+
+                camera.position.add(velocity);
+                checkGroundCollision();
+
+                let playerChunkX = Math.floor(camera.position.x / 10) * 10;
+                let playerChunkZ = Math.floor(camera.position.z / 10) * 10;
+                generateTerrain(playerChunkX, playerChunkZ);
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        init();
+    </script>
+</body>
+</html>
